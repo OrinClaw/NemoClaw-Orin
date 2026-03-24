@@ -174,20 +174,40 @@ done
 log "Step 8: Available sandboxes"
 openshell sandbox list || warn "Could not list sandboxes — the gateway may still be initializing"
 
+# ── Step 9: Start NemoClaw managed services ───────────────────────────────────
+
+log "Step 9: Starting NemoClaw managed services"
+
+if command -v nemoclaw >/dev/null 2>&1; then
+  if nemoclaw start; then
+    printf 'nemoclaw start completed\n'
+  else
+    warn "nemoclaw start failed."
+    warn "OpenShell is up, but managed services such as the OpenClaw gateway"
+    warn "and local port forwarding may still need manual recovery."
+  fi
+
+  echo ""
+  echo "NemoClaw status:"
+  nemoclaw status || warn "nemoclaw status failed"
+else
+  warn "nemoclaw CLI not found; skipping managed services start."
+fi
+
 # ── Done ───────────────────────────────────────────────────────────────────────
 
 echo ""
 echo "══════════════════════════════════════════════════════════════"
 echo ""
-echo "  NemoClaw gateway is running."
+echo "  OpenShell is running."
+echo "  NemoClaw managed services were started if available."
 echo ""
-echo "  Connect to your sandbox:"
-echo "    nemoclaw da-claw connect"
+echo "  Next:"
+echo "    nemoclaw status"
+echo "    nemoclaw ${SANDBOX_NAME} connect"
 echo ""
 echo "──────────────────────────────────────────────────────────────"
 echo ""
-echo ""
 echo "  REMINDER: Never use 'openshell gateway start' to resume"
-echo "  NemoClaw. Always use this script."
-echo ""
+echo "  NemoClaw on this Jetson setup. Always use this script."
 echo ""

@@ -2,6 +2,8 @@
 
 Local helper scripts for running NemoClaw on a Jetson Orin with a patched OpenShell cluster image.
 
+See the JetsonHacks article: https://wp.me/p7ZgI9-3Uv
+
 NemoClaw and OpenShell are in early development, expect breakage of these scripts.
 
 ## Why this exists
@@ -23,6 +25,8 @@ OpenShell CLI installation is handled here with the upstream `install.sh` path r
 source ~/.bashrc
 ./onboard-nemoclaw.sh
 ```
+
+It takes ~ 12 minutes to build and install the gateway image on a Jetson Orin Nano. 
 
 > [!WARNING]
 > **Stop Ollama (and other large Docker containers) before running `onboard-nemoclaw.sh`.**

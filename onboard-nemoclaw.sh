@@ -6,8 +6,8 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="${ENV_FILE:-$HOME/.config/openshell/jetson-orin.env}"
-PATCHED_IMAGE_NAME_DEFAULT="openshell-cluster:jetson-legacy-0.0.12"
-DOCKERFILE_PATH="${DOCKERFILE_PATH:-$SCRIPT_DIR/image/Dockerfile.openshell-cluster-legacy}"
+PATCHED_IMAGE_NAME_DEFAULT="openshell-cluster:patched-0.0.19"
+DOCKERFILE_PATH="${DOCKERFILE_PATH:-$SCRIPT_DIR/image/Dockerfile.openshell-cluster-patched}"
 FREE_PORT_CHECK_ONLY="${FREE_PORT_CHECK_ONLY:-false}"
 STOP_HOST_K3S="${STOP_HOST_K3S:-true}"
 REQUIRE_NODE_MAJOR="${REQUIRE_NODE_MAJOR:-22}"
@@ -97,8 +97,6 @@ check_openshell_image_override() {
   log "Using OpenShell cluster image override"
   printf 'OPENSHELL_CLUSTER_IMAGE=%s\n' "$OPENSHELL_CLUSTER_IMAGE"
   docker image inspect "$OPENSHELL_CLUSTER_IMAGE" >/dev/null 2>&1 || die "OpenShell cluster image not found locally: $OPENSHELL_CLUSTER_IMAGE"
-  docker run --rm --entrypoint sh "$OPENSHELL_CLUSTER_IMAGE" -lc 'iptables --version' | grep -q '(legacy)' || \
-    die "Patched OpenShell cluster image is not using legacy iptables."
 }
 
 rebuild_cluster_image() {
@@ -108,7 +106,7 @@ rebuild_cluster_image() {
   # when the gateway start is attempted. The build is fast from Docker cache.
   [[ -f "$DOCKERFILE_PATH" ]] || die "Dockerfile not found: $DOCKERFILE_PATH"
 
-  # Extract the version from the image tag, e.g. openshell-cluster:jetson-legacy-0.0.13 -> 0.0.13
+  # Extract the version from the image tag, e.g. openshell-cluster:patched-0.0.19 -> 0.0.19
   local cluster_version
   cluster_version="${OPENSHELL_CLUSTER_IMAGE##*-}"
   [[ -n "$cluster_version" ]] || die "Could not extract cluster version from OPENSHELL_CLUSTER_IMAGE=$OPENSHELL_CLUSTER_IMAGE"

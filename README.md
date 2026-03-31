@@ -25,12 +25,9 @@ The second is **day-2 recovery**:
 * restore access to an existing sandbox
 * restore the user-facing OpenClaw path for that sandbox
 
-The patched local OpenShell cluster image exists for two reasons in this setup:
+The patched local OpenShell cluster image exists for one reason in this setup:
 
-1. **iptables-legacy**
-   On this Jetson setup, the OpenShell cluster image needs to use `iptables-legacy` internally.
-
-2. **SSH handshake secret persistence**
+1. **SSH handshake secret persistence**
    The gateway substrate needs to preserve the SSH handshake secret it uses to re-establish the user-facing path to an existing sandbox after restart.
 
 OpenShell CLI installation is handled here using the upstream `install.sh` path rather than `uv tool install`, because the current `openshell` Python package wheels are not a good fit for the typical Jetson Ubuntu 22.04 / glibc 2.35 environment.
@@ -167,7 +164,6 @@ When debugging reboot problems, it is often useful to run the more explicit sequ
 
 ```bash
 ./restart-nemoclaw.sh --debug
-./lib/wait-for-openshell-cluster-stability.sh <sandbox-name> --debug
 ./recover-sandbox.sh <sandbox-name> --skip-outer-restart --debug
 ```
 
@@ -176,6 +172,13 @@ After recovery succeeds, use the normal user-facing workflow:
 ```bash
 nemoclaw <sandbox-name> connect
 openclaw tui
+```
+
+Browser access depends on a host-side forward. Use this helper directly if you
+need to check or restore browser forwarding:
+
+```bash
+./forward-openclaw.sh <sandbox-name>
 ```
 
 ## Important warning about gateway startup
@@ -201,10 +204,10 @@ Most users only need the scripts in the repository root. The `lib/` scripts are 
 * `onboard-nemoclaw.sh` — run NemoClaw onboarding with Jetson-oriented checks and guardrails
 * `restart-nemoclaw.sh` — restore the outer OpenShell gateway substrate after reboot
 * `recover-sandbox.sh` — restore the user-facing path for an existing sandbox after reboot
+* `forward-openclaw.sh` — ensure, check, or stop the OpenClaw browser forward
 
 ### Important helper scripts
 
-* `lib/wait-for-openshell-cluster-stability.sh` — wait for the cluster and sandbox to settle before inner recovery
 * `lib/reconcile-sandbox-ssh-handshake.sh` — reconcile the sandbox SSH handshake state with the gateway
 * `lib/start-openclaw-gateway-via-ssh.sh` — start the inner OpenClaw gateway through the OpenShell user-facing path
 * `lib/inspect-openclaw-state.sh` — inspect durable local OpenClaw identity and pairing state

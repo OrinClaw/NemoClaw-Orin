@@ -7,14 +7,12 @@ Main one-shot setup entry point.
 What it does:
 
 - installs or verifies Node.js and npm
-- installs or verifies `uv`
-- installs or verifies the OpenShell CLI with `uv`
+- installs or verifies the OpenShell CLI
 - installs or verifies the NemoClaw CLI with `npm`
 - runs `setup-openshell-host-prereqs.sh`
 - verifies Docker and host networking state
 - determines the latest upstream OpenShell cluster version
-- builds a patched local image such as `openshell-cluster:jetson-legacy-0.0.12`
-- verifies that the image reports `iptables (legacy)`
+- builds a patched local image such as `openshell-cluster:patched-0.0.19`
 - writes `~/.config/openshell/jetson-orin.env`
 - adds the required shell environment blocks to `~/.bashrc`
 
@@ -41,9 +39,9 @@ What it does not do:
 - does not switch host `iptables` alternatives
 - does not flush host firewall rules
 
-## `Dockerfile.openshell-cluster-legacy`
+## `Dockerfile.openshell-cluster-patched`
 
-Builds a local OpenShell cluster image that uses `iptables-legacy`.
+Builds a local OpenShell cluster image with SSH handshake secret persistence.
 
 ## `check-openshell-cluster-update.sh`
 
@@ -57,3 +55,15 @@ Modes:
 ## `onboard-nemoclaw.sh`
 
 Runs NemoClaw onboarding with extra checks around tooling, memory, swap, port conflicts, and image validation.
+
+## `forward-openclaw.sh`
+
+Manages browser forwarding for OpenClaw.
+
+What it does:
+
+- defaults to ensuring a host-side forward is active for `127.0.0.1:18789`
+- supports `--status` to report forwarding state
+- supports `--stop` to stop the background forward
+- supports `--bind <bind:port>` for alternate bind targets
+- verifies a host listener is present before declaring success

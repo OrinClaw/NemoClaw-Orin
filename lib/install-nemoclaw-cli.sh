@@ -3,9 +3,8 @@ set -Eeuo pipefail
 
 # install-nemoclaw-cli.sh — Install the NemoClaw CLI on a Jetson host
 #
-# Clones the NemoClaw repository to ~/NemoClaw, applies the Jetson-specific
-# patch that makes nemoclaw onboard respect a pre-set OPENSHELL_CLUSTER_IMAGE,
-# then links the CLI into the npm global bin directory.
+# Clones the NemoClaw repository to ~/NemoClaw and links the CLI into the npm
+# global bin directory.
 #
 # The clone directory must remain in place after installation — nemoclaw onboard
 # stages its Docker build context from it at runtime and requires the full
@@ -76,47 +75,6 @@ redirect_npm_prefix_if_system() {
   fi
 }
 
-patch_nemoclaw_onboard() {
-  # NemoClaw v0.1.0 unconditionally overwrites OPENSHELL_CLUSTER_IMAGE with
-  # the upstream ghcr.io image, ignoring any value already set in the
-  # environment. On Jetson we need the patched local image (iptables-legacy)
-  # or the gateway container crashes at startup. This patch makes NemoClaw
-  # respect a pre-set OPENSHELL_CLUSTER_IMAGE.
-  #
-  # The patch is idempotent: it checks for the already-patched string before
-  # applying, so re-running is safe.
-
-  local clone_dir="$1"
-  local target="$clone_dir/bin/lib/onboard.js"
-
-  [[ -f "$target" ]] || die "Cannot patch NemoClaw onboard: file not found: $target"
-
-  local needle='if (stableGatewayImage && openshellVersion) {'
-  local patched='if (stableGatewayImage && openshellVersion && !process.env.OPENSHELL_CLUSTER_IMAGE) {'
-
-  if grep -qF "$patched" "$target"; then
-    log "NemoClaw onboard patch already applied — skipping"
-    return 0
-  fi
-
-  if ! grep -qF "$needle" "$target"; then
-    warn "NemoClaw onboard patch: expected string not found in $target"
-    warn "The NemoClaw source may have changed — review manually:"
-    warn "  $target"
-    warn "Look for the block that sets gatewayEnv.OPENSHELL_CLUSTER_IMAGE"
-    warn "and add '&& !process.env.OPENSHELL_CLUSTER_IMAGE' to the condition."
-    return 0
-  fi
-
-  log "Patching NemoClaw onboard to respect OPENSHELL_CLUSTER_IMAGE"
-  # Escape & in the replacement string — sed interprets & as "the whole match"
-  local patched_escaped="${patched//&/\\&}"
-  sed -i "s|${needle}|${patched_escaped}|" "$target"
-
-  grep -qF "$patched" "$target" || die "Patch was applied but verification failed — check $target manually"
-  printf 'Patched: %s\n' "$target"
-}
-
 install_nemoclaw() {
   need_cmd git
   need_cmd npm
@@ -134,18 +92,11 @@ install_nemoclaw() {
   if [[ -d "$clone_dir" ]]; then
     warn "Clone directory already exists: $clone_dir"
     warn "Pulling latest changes instead of cloning fresh"
-    # The Jetson patch modifies bin/lib/onboard.js. Reset it before pulling so
-    # upstream changes to that file are not blocked by the local modification.
-    # The patch is re-applied unconditionally below.
-    git -C "$clone_dir" checkout -- bin/lib/onboard.js 2>/dev/null || true
     git -C "$clone_dir" pull --ff-only || \
       die "git pull failed in $clone_dir — resolve conflicts or remove the directory and retry"
   else
     git clone "$NEMOCLAW_CLONE_URL" "$clone_dir"
   fi
-
-  # Patch before linking so the installed command reflects the fix
-  patch_nemoclaw_onboard "$clone_dir"
 
   (
     cd "$clone_dir"

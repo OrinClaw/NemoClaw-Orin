@@ -236,6 +236,20 @@ run_verify() {
     --quiet
 }
 
+run_forward_openclaw() {
+  local args=("$SANDBOX_NAME")
+
+  if [[ "$QUIET" == "true" ]]; then
+    args+=(--quiet)
+  elif [[ "$DEBUG" == "true" ]]; then
+    args+=(--debug)
+  elif [[ "$VERBOSE" == "true" ]]; then
+    args+=(--verbose)
+  fi
+
+  "$ROOT_DIR/forward-openclaw.sh" "${args[@]}"
+}
+
 debug_report_success_path() {
   local path_name="$1"
   if [[ "$DEBUG" == "true" ]]; then
@@ -502,6 +516,13 @@ main() {
               return 1
             fi
 
+            ui_step "Ensuring OpenClaw browser forward"
+            run_forward_openclaw || {
+              ui_warn "Sandbox recovery succeeded, but browser forward could not be confirmed."
+              ui_warn "Run: ./forward-openclaw.sh ${SANDBOX_NAME}"
+              return 1
+            }
+
             debug_report_success_path "cli"
             show_next_steps
             return 0
@@ -638,6 +659,13 @@ main() {
     esac
     return 1
   fi
+
+  ui_step "Ensuring OpenClaw browser forward"
+  run_forward_openclaw || {
+    ui_warn "Sandbox recovery succeeded, but browser forward could not be confirmed."
+    ui_warn "Run: ./forward-openclaw.sh ${SANDBOX_NAME}"
+    return 1
+  }
 
   debug_report_success_path "mechanical"
   show_next_steps

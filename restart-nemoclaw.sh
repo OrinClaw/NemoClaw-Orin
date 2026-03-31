@@ -135,26 +135,6 @@ wait_for_pod_ready() {
   return 1
 }
 
-start_nemoclaw_services() {
-  if ! command -v nemoclaw >/dev/null 2>&1; then
-    if is_verbose || is_debug; then
-      ui_warn "nemoclaw CLI not found; skipping managed services start."
-    fi
-    return 0
-  fi
-
-  if nemoclaw start >/dev/null 2>&1; then
-    if is_verbose || is_debug; then
-      ui_info "nemoclaw start completed."
-    fi
-    return 0
-  fi
-
-  ui_warn "nemoclaw start failed."
-  ui_warn "OpenShell is up, but managed services may still need manual recovery."
-  return 0
-}
-
 show_debug_state() {
   if ! is_debug; then
     return 0
@@ -203,14 +183,17 @@ main() {
   wait_for_pod_ready "openshell-0" \
     || die "openshell-0 did not become ready within ${POD_READY_TIMEOUT}s. Check: docker logs $CONTAINER_NAME"
 
-  ui_step "Starting NemoClaw managed services"
-  start_nemoclaw_services
-
   show_debug_state
 
   if ! is_quiet; then
     echo ""
     echo "OpenShell outer recovery complete."
+    echo ""
+    echo "Next:"
+    echo "  ./recover-sandbox.sh <sandbox-name>"
+    echo ""
+    echo "Browser access is restored by sandbox recovery (forward-openclaw stage),"
+    echo "not by outer restart alone."
   fi
 }
 

@@ -53,6 +53,8 @@ extract_version() {
   local image="$1"
   local tag
   tag="${image##*:}"
+  tag="${tag#patched-}"
+  # Backward-compatibility with older local tags from previous script versions.
   tag="${tag#jetson-legacy-}"
   tag="${tag#v}"
   printf '%s\n' "$tag"
@@ -77,7 +79,7 @@ Suggested base image to patch:
   ghcr.io/nvidia/openshell/cluster:$latest_tag
 
 Suggested patched local tag:
-  openshell-cluster:jetson-legacy-$latest_tag
+  openshell-cluster:patched-$latest_tag
 EOF2
   exit 0
 fi
@@ -88,6 +90,6 @@ if [[ "$current_version" == "$latest_tag" ]]; then
 else
   echo "Update available."
   echo "Suggested new base image: ghcr.io/nvidia/openshell/cluster:$latest_tag"
-  echo "Suggested patched local tag: openshell-cluster:jetson-legacy-$latest_tag"
-  echo "Rebuild your patched image, validate iptables reports '(legacy)', then update OPENSHELL_CLUSTER_IMAGE."
+  echo "Suggested patched local tag: openshell-cluster:patched-$latest_tag"
+  echo "Rebuild your patched image and update OPENSHELL_CLUSTER_IMAGE."
 fi

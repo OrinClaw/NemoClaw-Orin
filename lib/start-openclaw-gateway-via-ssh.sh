@@ -158,11 +158,6 @@ wait_for_sandbox_ready() {
   return 1
 }
 
-ensure_forward() {
-  openshell forward stop "${RUNTIME_PORT}" "${SANDBOX_NAME}" >/dev/null 2>&1 || true
-  openshell forward start "${RUNTIME_PORT}" "${SANDBOX_NAME}" --background >/dev/null 2>&1
-}
-
 fix_ownership_host_side() {
   docker exec "$CONTAINER_NAME" \
     kubectl exec -n "$SANDBOX_NAMESPACE" "$SANDBOX_NAME" -- \
@@ -401,10 +396,6 @@ main() {
   debug_stderr "Pod ready timeout: ${POD_READY_TIMEOUT}s"
 
   fix_ownership_host_side
-
-  if ! ensure_forward; then
-    emit_failure_and_debug "forward_failed"
-  fi
 
   local stop_output=""
   if ! capture_command stop_output stop_old_gateway_in_ssh_context; then

@@ -86,7 +86,6 @@ The sequence:
 
 ```bash
 ./restart-nemoclaw.sh --debug
-./lib/wait-for-openshell-cluster-stability.sh <sandbox-name> --debug
 ```
 
 made the outer system much more stable before we attempted inner recovery.
@@ -226,7 +225,6 @@ That includes:
 This is the job of:
 
 * `restart-nemoclaw.sh`
-* `lib/wait-for-openshell-cluster-stability.sh`
 
 ### Then, inner recovery
 
@@ -308,7 +306,6 @@ The sequence that ultimately worked was:
 
 ```bash
 ./restart-nemoclaw.sh --debug
-./lib/wait-for-openshell-cluster-stability.sh <sandbox-name> --debug
 ./recover-sandbox.sh <sandbox-name> --skip-outer-restart --debug
 ```
 

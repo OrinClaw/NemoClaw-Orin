@@ -1,0 +1,16 @@
+ARG CLUSTER_VERSION=0.0.19
+FROM ghcr.io/nvidia/openshell/cluster:${CLUSTER_VERSION}
+
+# Patch: Persist the SSH handshake secret across container restarts.
+#
+# Upstream bug: cluster-entrypoint.sh generates a new random
+# SSH_HANDSHAKE_SECRET on every container start. openshell-0 picks up the
+# new secret but the Sandbox CRD pod spec retains the previous one, causing
+# "handshake verification failed" on every restart until a full re-onboard.
+#
+# Fix: on first start, generate and save the secret to the k3s persistent
+# volume. On subsequent starts, reload it from there. The secret is then
+# stable across stop/start cycles and the sandbox always agrees with the
+# gateway.
+COPY patch-entrypoint.sh /tmp/patch-entrypoint.sh
+RUN sh /tmp/patch-entrypoint.sh && rm /tmp/patch-entrypoint.sh

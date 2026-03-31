@@ -6,13 +6,13 @@ set -Eeuo pipefail
 # - running the reusable host-prereqs helper
 # - verifying Docker / bridge netfilter / host iptables state
 # - discovering the latest upstream OpenShell cluster version
-# - building a patched OpenShell cluster image that uses iptables-legacy
+# - building a patched OpenShell cluster image with handshake-secret persistence
 # - writing an environment file that exports OPENSHELL_CLUSTER_IMAGE
 #
 # Tool installation is delegated to standalone scripts:
 #   install-nodejs.sh         — Node.js and npm
 #   install-openshell-cli.sh  — OpenShell CLI
-#   install-nemoclaw-cli.sh   — NemoClaw CLI (git clone + npm link + Jetson patch)
+#   install-nemoclaw-cli.sh   — NemoClaw CLI (git clone + npm link)
 #
 # This script does NOT run `openshell gateway start` or `nemoclaw onboard`.
 # Keep the heavier onboarding phase separate so failures are easier to debug.
@@ -21,16 +21,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_NODEJS_SCRIPT="${INSTALL_NODEJS_SCRIPT:-$SCRIPT_DIR/lib/install-nodejs.sh}"
 INSTALL_OPENSHELL_SCRIPT="${INSTALL_OPENSHELL_SCRIPT:-$SCRIPT_DIR/lib/install-openshell-cli.sh}"
 INSTALL_NEMOCLAW_SCRIPT="${INSTALL_NEMOCLAW_SCRIPT:-$SCRIPT_DIR/lib/install-nemoclaw-cli.sh}"
-DOCKERFILE_PATH="${DOCKERFILE_PATH:-$SCRIPT_DIR/image/Dockerfile.openshell-cluster-legacy}"
+DOCKERFILE_PATH="${DOCKERFILE_PATH:-$SCRIPT_DIR/image/Dockerfile.openshell-cluster-patched}"
 UPDATE_CHECKER_PATH="${UPDATE_CHECKER_PATH:-$SCRIPT_DIR/lib/check-openshell-cluster-update.sh}"
 HOST_PREREQS_SCRIPT="${HOST_PREREQS_SCRIPT:-$SCRIPT_DIR/lib/setup-openshell-host-prereqs.sh}"
-PATCHED_IMAGE_NAME_PREFIX="${PATCHED_IMAGE_NAME_PREFIX:-openshell-cluster:jetson-legacy}"
+PATCHED_IMAGE_NAME_PREFIX="${PATCHED_IMAGE_NAME_PREFIX:-openshell-cluster:patched}"
 ENV_FILE="${ENV_FILE:-$HOME/.config/openshell/jetson-orin.env}"
-REQUIRE_LEGACY_HOST_IPTABLES="${REQUIRE_LEGACY_HOST_IPTABLES:-true}"
-DEFAULT_CLUSTER_VERSION="${DEFAULT_CLUSTER_VERSION:-0.0.12}"
+DEFAULT_CLUSTER_VERSION="${DEFAULT_CLUSTER_VERSION:-0.0.19}"
 NODE_MAJOR="${NODE_MAJOR:-22}"
 OPENSHELL_INSTALL_URL="${OPENSHELL_INSTALL_URL:-https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh}"
-OPENSHELL_VERSION="${OPENSHELL_VERSION:-v0.0.13}"
+OPENSHELL_VERSION="${OPENSHELL_VERSION:-v0.0.19}"
 NEMOCLAW_CLONE_URL="${NEMOCLAW_CLONE_URL:-https://github.com/NVIDIA/NemoClaw.git}"
 OPENSHELL_CLUSTER_VERSION=""
 PATCHED_IMAGE_NAME=""
@@ -50,12 +49,11 @@ Environment overrides:
   INSTALL_OPENSHELL_SCRIPT=/path      Override path to install-openshell-cli.sh
   INSTALL_NEMOCLAW_SCRIPT=/path       Override path to install-nemoclaw-cli.sh
   HOST_PREREQS_SCRIPT=/path           Override path to host-prereqs helper
-  REQUIRE_LEGACY_HOST_IPTABLES=true|false  Require host iptables to report '(legacy)' (default: true)
   PATCHED_IMAGE_NAME_PREFIX=name:tag  Override local patched image tag prefix
   DEFAULT_CLUSTER_VERSION=x.y.z       Fallback cluster version if update checker unavailable
   NODE_MAJOR=22                       Node.js major line (passed to install-nodejs.sh)
   OPENSHELL_INSTALL_URL=https://...   OpenShell install script URL (passed to install-openshell-cli.sh)
-  OPENSHELL_VERSION=v0.0.13           OpenShell version (passed to install-openshell-cli.sh)
+  OPENSHELL_VERSION=v0.0.19           OpenShell version (passed to install-openshell-cli.sh)
   NEMOCLAW_CLONE_URL=https://...      NemoClaw git repository URL (passed to install-nemoclaw-cli.sh)
 EOF_USAGE
 }
@@ -126,10 +124,6 @@ verify_host_state() {
   lsmod | grep -E 'br_netfilter|iptable_filter|iptable_nat|ip_tables|nf_tables' || true
   sysctl net.bridge.bridge-nf-call-iptables
   sysctl net.bridge.bridge-nf-call-ip6tables
-
-  if [[ "$REQUIRE_LEGACY_HOST_IPTABLES" == "true" ]]; then
-    iptables --version | grep -q '(legacy)' || die "Host iptables is not using legacy backend."
-  fi
 }
 
 discover_cluster_version() {

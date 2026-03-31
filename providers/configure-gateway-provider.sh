@@ -3,6 +3,12 @@ set -Eeuo pipefail
 
 # Configure the OpenShell gateway to use a selected upstream LLM provider.
 #
+# This version separates four concerns:
+#   1) gateway provider definition
+#   2) host-side endpoint probing
+#   3) optional model catalog checking
+#   4) inference activation
+#
 # Intended usage:
 #   - Run AFTER `nemoclaw onboard`
 #   - Create or refresh one named gateway-side provider record
@@ -10,11 +16,6 @@ set -Eeuo pipefail
 #
 # This script configures the gateway provider only.
 # It does NOT install model servers and does NOT manage local model inventory.
-#
-# Defaults:
-#   - provider type: openai
-#   - backend hint:  ollama
-#   - no arguments:  status only
 
 PROVIDER_NAME="${PROVIDER_NAME:-}"
 PROVIDER_TYPE="${PROVIDER_TYPE:-openai}"
@@ -29,6 +30,10 @@ SKIP_ENDPOINT_CHECK="${SKIP_ENDPOINT_CHECK:-false}"
 SKIP_MODEL_CHECK="${SKIP_MODEL_CHECK:-false}"
 STATUS_ONLY="false"
 
+PROBE_BASE_URL="${PROBE_BASE_URL:-}"
+LIST_PROVIDERS="false"
+USE_ONBOARDING="false"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODEL_MANAGER_SCRIPT="${MODEL_MANAGER_SCRIPT:-$SCRIPT_DIR/manage-ollama-models.sh}"
 ONBOARD_SESSION_PATH="${ONBOARD_SESSION_PATH:-$HOME/.nemoclaw/onboard-session.json}"
@@ -36,8 +41,6 @@ TMP_ENDPOINT_JSON="/tmp/gateway-provider-check.$$.$RANDOM.json"
 SCRIPT_PATH="${SCRIPT_PATH:-$SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")}"
 DISPLAY_SCRIPT_PATH="${DISPLAY_SCRIPT_PATH:-./providers/$(basename "${BASH_SOURCE[0]}")}"
 DISPLAY_MODEL_MANAGER_PATH="${DISPLAY_MODEL_MANAGER_PATH:-./providers/$(basename "$MODEL_MANAGER_SCRIPT")}"
-LIST_PROVIDERS="false"
-USE_ONBOARDING="false"
 
 log()  { printf '\n==> %s\n' "$*"; }
 warn() { printf '\n[WARN] %s\n' "$*" >&2; }
@@ -69,7 +72,8 @@ Options:
   --use-onboarding            Switch back to the original onboarding provider/model
   --provider-name NAME        Provider name to create or refresh
   --provider-type TYPE        Provider type (default: openai)
-  --base-url URL              Upstream OpenAI-compatible base URL
+  --base-url URL              Gateway-visible upstream OpenAI-compatible base URL
+  --probe-base-url URL        Host-side base URL used only for validation
   --api-key VALUE             Upstream API key or placeholder value
   --backend HINT              ollama, vllm, or generic (default: ollama)
   --model NAME                Model name or model ID to use
@@ -85,6 +89,7 @@ Environment variable equivalents:
   PROVIDER_NAME
   PROVIDER_TYPE
   OPENAI_BASE_URL
+  PROBE_BASE_URL
   OPENAI_API_KEY_VALUE
   BACKEND_HINT
   MODEL_NAME
@@ -100,12 +105,14 @@ resolve_defaults() {
   case "$BACKEND_HINT" in
     ollama)
       [[ -n "$PROVIDER_NAME" ]] || PROVIDER_NAME="ollama-local"
+      [[ -n "$PROBE_BASE_URL" ]] || PROBE_BASE_URL="http://127.0.0.1:11434"
       if [[ "$OPENAI_BASE_URL" == "http://host.openshell.internal:11434/v1" ]]; then
         OPENAI_BASE_URL="http://host.openshell.internal:11434/v1"
       fi
       ;;
     vllm)
       [[ -n "$PROVIDER_NAME" ]] || PROVIDER_NAME="vllm-local"
+      [[ -n "$PROBE_BASE_URL" ]] || PROBE_BASE_URL="http://127.0.0.1:8000/v1"
       if [[ "$OPENAI_BASE_URL" == "http://host.openshell.internal:11434/v1" ]]; then
         OPENAI_BASE_URL="http://host.openshell.internal:8000/v1"
       fi
@@ -152,6 +159,11 @@ parse_args() {
       --base-url)
         [[ $# -ge 2 ]] || die "--base-url requires a value."
         OPENAI_BASE_URL="$2"
+        shift 2
+        ;;
+      --probe-base-url)
+        [[ $# -ge 2 ]] || die "--probe-base-url requires a value."
+        PROBE_BASE_URL="$2"
         shift 2
         ;;
       --api-key)
@@ -225,12 +237,19 @@ check_gateway() {
 }
 
 endpoint_probe_url() {
+  local base
+  if [[ -n "$PROBE_BASE_URL" ]]; then
+    base="$PROBE_BASE_URL"
+  else
+    base="$OPENAI_BASE_URL"
+  fi
+
   case "$BACKEND_HINT" in
     ollama)
-      printf '%s' "${OPENAI_BASE_URL%/v1}/api/tags"
+      printf '%s' "${base%/v1}/api/tags"
       ;;
     vllm|generic)
-      printf '%s' "${OPENAI_BASE_URL%/}/models"
+      printf '%s' "${base%/}/models"
       ;;
   esac
 }
@@ -246,7 +265,7 @@ check_endpoint() {
 
   log "Checking upstream endpoint"
   curl --silent --show-error --fail "$probe_url" >"$TMP_ENDPOINT_JSON" || \
-    die "Cannot reach upstream endpoint at $probe_url. Check the base URL and make sure the server is running and reachable from the Jetson."
+    die "Cannot reach upstream endpoint at $probe_url. Check the probe base URL and make sure the server is running and reachable from the Jetson host."
 }
 
 maybe_check_model_presence() {
@@ -260,6 +279,10 @@ maybe_check_model_presence() {
   fi
 
   if [[ ! -f "$TMP_ENDPOINT_JSON" ]]; then
+    if [[ "$SKIP_ENDPOINT_CHECK" == "true" ]]; then
+      warn "Skipping model presence check because endpoint probing was skipped and no endpoint catalog is available."
+      return 0
+    fi
     check_endpoint
   fi
 
@@ -540,6 +563,16 @@ EOF_STATUS
     printf '  Not present\n'
   fi
 
+  if [[ -n "$OPENAI_BASE_URL" ]]; then
+    printf '\nGateway base URL for this target:\n'
+    printf '  %s\n' "$OPENAI_BASE_URL"
+  fi
+
+  if [[ -n "$PROBE_BASE_URL" ]]; then
+    printf '\nHost-side probe base URL for this target:\n'
+    printf '  %s\n' "$PROBE_BASE_URL"
+  fi
+
   print_gateway_inference_status
   print_onboarding_summary_if_available
 
@@ -563,6 +596,13 @@ Gateway provider configuration complete.
 Provider name:
   $PROVIDER_NAME
 EOF_SUMMARY
+
+  printf '\nConfigured provider base URL:\n'
+  printf '  %s\n' "$OPENAI_BASE_URL"
+  if [[ -n "$PROBE_BASE_URL" ]]; then
+    printf '\nValidation probe base URL:\n'
+    printf '  %s\n' "$PROBE_BASE_URL"
+  fi
 
   if [[ "$ACTIVATE" == "true" ]]; then
     printf '\nRequested change:\n'

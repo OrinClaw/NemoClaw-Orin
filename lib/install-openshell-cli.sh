@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 OPENSHELL_INSTALL_URL="${OPENSHELL_INSTALL_URL:-https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh}"
-OPENSHELL_VERSION="${OPENSHELL_VERSION:-v0.0.19}"
+OPENSHELL_VERSION="${OPENSHELL_VERSION:-v0.0.16}"
 
 log() { printf '\n==> %s\n' "$*"; }
 die() { printf '\n[ERROR] %s\n' "$*" >&2; exit 1; }

@@ -47,6 +47,70 @@ warn() { printf '\n[WARN] %s\n' "$*" >&2; }
 die()  { printf '\n[ERROR] %s\n' "$*" >&2; exit 1; }
 need_cmd() { command -v "$1" >/dev/null 2>&1 || die "Missing required command: $1"; }
 
+validation_backend() {
+  case "$PROVIDER_TYPE" in
+    nvidia)
+      printf '%s' "nvidia"
+      ;;
+    *)
+      case "$BACKEND_HINT" in
+        ollama|vllm|generic)
+          printf '%s' "$BACKEND_HINT"
+          ;;
+        *)
+          printf '%s' "generic"
+          ;;
+      esac
+      ;;
+  esac
+}
+
+provider_label() {
+  case "$(validation_backend)" in
+    nvidia)
+      printf '%s' "NVIDIA Integrate"
+      ;;
+    ollama)
+      printf '%s' "Ollama"
+      ;;
+    vllm)
+      printf '%s' "vLLM"
+      ;;
+    generic)
+      case "$PROVIDER_TYPE" in
+        openai)
+          printf '%s' "OpenAI-compatible provider"
+          ;;
+        *)
+          printf '%s' "provider"
+          ;;
+      esac
+      ;;
+  esac
+}
+
+provider_credential_key() {
+  case "$PROVIDER_TYPE" in
+    nvidia)
+      printf '%s' "NVIDIA_API_KEY"
+      ;;
+    *)
+      printf '%s' "OPENAI_API_KEY"
+      ;;
+  esac
+}
+
+provider_base_url_key() {
+  case "$PROVIDER_TYPE" in
+    nvidia)
+      printf '%s' "NVIDIA_BASE_URL"
+      ;;
+    *)
+      printf '%s' "OPENAI_BASE_URL"
+      ;;
+  esac
+}
+
 cleanup() {
   rm -f "$TMP_ENDPOINT_JSON"
 }
@@ -102,7 +166,10 @@ EOF_USAGE
 }
 
 resolve_defaults() {
-  case "$BACKEND_HINT" in
+  case "$(validation_backend)" in
+    nvidia)
+      [[ -n "$PROVIDER_NAME" ]] || PROVIDER_NAME="nvidia-integrate"
+      ;;
     ollama)
       [[ -n "$PROVIDER_NAME" ]] || PROVIDER_NAME="ollama-local"
       [[ -n "$PROBE_BASE_URL" ]] || PROBE_BASE_URL="http://127.0.0.1:11434"
@@ -121,7 +188,7 @@ resolve_defaults() {
       [[ -n "$PROVIDER_NAME" ]] || PROVIDER_NAME="gateway-provider"
       ;;
     *)
-      die "Unsupported backend hint: $BACKEND_HINT (use ollama, vllm, or generic)."
+      die "Unsupported provider validation path for provider type '$PROVIDER_TYPE' and backend hint '$BACKEND_HINT'."
       ;;
   esac
 }
@@ -244,11 +311,11 @@ endpoint_probe_url() {
     base="$OPENAI_BASE_URL"
   fi
 
-  case "$BACKEND_HINT" in
+  case "$(validation_backend)" in
     ollama)
       printf '%s' "${base%/v1}/api/tags"
       ;;
-    vllm|generic)
+    nvidia|vllm|generic)
       printf '%s' "${base%/}/models"
       ;;
   esac
@@ -261,11 +328,20 @@ check_endpoint() {
   fi
 
   local probe_url
+  local -a curl_args=(
+    --silent
+    --show-error
+    --fail
+  )
   probe_url="$(endpoint_probe_url)"
 
-  log "Checking upstream endpoint"
-  curl --silent --show-error --fail "$probe_url" >"$TMP_ENDPOINT_JSON" || \
-    die "Cannot reach upstream endpoint at $probe_url. Check the probe base URL and make sure the server is running and reachable from the Jetson host."
+  if [[ -n "$OPENAI_API_KEY_VALUE" && "$OPENAI_API_KEY_VALUE" != "empty" ]]; then
+    curl_args+=(-H "Authorization: Bearer $OPENAI_API_KEY_VALUE")
+  fi
+
+  log "Checking $(provider_label) endpoint"
+  curl "${curl_args[@]}" "$probe_url" >"$TMP_ENDPOINT_JSON" || \
+    die "Cannot reach $(provider_label) endpoint at $probe_url with the current provider settings. Check network reachability from the Jetson host, the base URL, and the API key."
 }
 
 maybe_check_model_presence() {
@@ -286,7 +362,11 @@ maybe_check_model_presence() {
     check_endpoint
   fi
 
-  case "$BACKEND_HINT" in
+  case "$(validation_backend)" in
+    nvidia)
+      log "Skipping preflight model catalog check for NVIDIA Integrate"
+      warn "NVIDIA Integrate model validation is deferred to OpenShell activation for provider '$PROVIDER_NAME'."
+      ;;
     ollama)
       log "Checking that the requested model exists in the upstream catalog"
       if ! python3 - "$MODEL_NAME" "$TMP_ENDPOINT_JSON" <<'PY'
@@ -324,7 +404,7 @@ EOF_MISSING
         exit 1
       fi
       ;;
-    vllm|generic)
+    vllm)
       log "Checking that the requested model exists in the upstream catalog"
       python3 - "$MODEL_NAME" "$TMP_ENDPOINT_JSON" <<'PY'
 import json
@@ -341,6 +421,10 @@ if model not in models:
     raise SystemExit(f"Model not present in upstream catalog: {model}")
 print(f"Found model in upstream catalog: {model}")
 PY
+      ;;
+    generic)
+      log "Skipping preflight model catalog check for $(provider_label)"
+      warn "Model validation is deferred to OpenShell activation for provider '$PROVIDER_NAME'."
       ;;
   esac
 }
@@ -361,12 +445,16 @@ remove_provider_if_requested() {
 }
 
 create_provider() {
+  local credential_key config_key
+  credential_key="$(provider_credential_key)"
+  config_key="$(provider_base_url_key)"
+
   log "Creating provider: $PROVIDER_NAME"
   openshell provider create \
     --name "$PROVIDER_NAME" \
     --type "$PROVIDER_TYPE" \
-    --credential "OPENAI_API_KEY=$OPENAI_API_KEY_VALUE" \
-    --config "OPENAI_BASE_URL=$OPENAI_BASE_URL"
+    --credential "$credential_key=$OPENAI_API_KEY_VALUE" \
+    --config "$config_key=$OPENAI_BASE_URL"
 }
 
 ensure_provider_present() {
@@ -583,7 +671,7 @@ Helpful follow-up:
   Show all providers:        $DISPLAY_SCRIPT_PATH --list-providers
 EOF_NEXT
   print_switch_back_hint_if_available
-  if [[ "$BACKEND_HINT" == "ollama" ]]; then
+  if [[ "$(validation_backend)" == "ollama" ]]; then
     printf '  Local model manager:     %s\n' "$DISPLAY_MODEL_MANAGER_PATH"
   fi
 }
@@ -624,7 +712,7 @@ Helpful follow-up:
   Show all providers:        $DISPLAY_SCRIPT_PATH --list-providers
 EOF_NEXT
   print_switch_back_hint_if_available
-  if [[ "$BACKEND_HINT" == "ollama" ]]; then
+  if [[ "$(validation_backend)" == "ollama" ]]; then
     printf '  Local model manager:     %s\n' "$DISPLAY_MODEL_MANAGER_PATH"
   fi
 }

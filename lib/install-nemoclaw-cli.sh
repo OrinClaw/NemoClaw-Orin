@@ -3,8 +3,9 @@ set -Eeuo pipefail
 
 # install-nemoclaw-cli.sh — Install the NemoClaw CLI on a Jetson host
 #
-# Clones the NemoClaw repository to ~/NemoClaw and links the CLI into the npm
-# global bin directory.
+# Clones the NemoClaw repository to ~/NemoClaw, applies the Jetson-specific
+# patch that makes nemoclaw onboard respect a pre-set OPENSHELL_CLUSTER_IMAGE,
+# then links the CLI into the npm global bin directory.
 #
 # The clone directory must remain in place after installation — nemoclaw onboard
 # stages its Docker build context from it at runtime and requires the full
@@ -75,6 +76,88 @@ redirect_npm_prefix_if_system() {
   fi
 }
 
+patch_nemoclaw_onboard() {
+  # NemoClaw unconditionally overwrites OPENSHELL_CLUSTER_IMAGE with
+  # the upstream ghcr.io image, ignoring any value already set in the
+  # environment. On Jetson we need the patched local image (iptables-legacy)
+  # or the gateway container crashes at startup. This patch makes NemoClaw
+  # respect a pre-set OPENSHELL_CLUSTER_IMAGE.
+  #
+  # It also forces NVIDIA Endpoints/NIM sandboxes to use openai-completions.
+  # Responses API probing may succeed, but OpenClaw currently behaves better
+  # with completions for the Nemotron route on Jetson.
+  #
+  # The patch is idempotent: it checks for the already-patched string before
+  # applying, so re-running is safe.
+
+  local clone_dir="$1"
+  local target="$clone_dir/bin/lib/onboard.js"
+
+  [[ -f "$target" ]] || die "Cannot patch NemoClaw onboard: file not found: $target"
+
+  local image_needle='if (stableGatewayImage && openshellVersion) {'
+  local image_patch='if (stableGatewayImage && openshellVersion && !process.env.OPENSHELL_CLUSTER_IMAGE) {'
+  local nvidia_needle=$'    case "nvidia-prod":\n    case "nvidia-nim":\n    default:\n      providerKey = "inference";'
+  local nvidia_patch=$'    case "nvidia-prod":\n    case "nvidia-nim":\n      inferenceApi = "openai-completions";\n      providerKey = "inference";\n      primaryModelRef = `inference/${model}`;\n      break;\n    default:\n      providerKey = "inference";'
+  local changed="false"
+
+  if grep -qF "$image_patch" "$target"; then
+    log "NemoClaw image override patch already applied - skipping"
+  elif grep -qF "$image_needle" "$target"; then
+    log "Patching NemoClaw onboard to respect OPENSHELL_CLUSTER_IMAGE"
+    local image_patch_escaped="${image_patch//&/\\&}"
+    sed -i "s|${image_needle}|${image_patch_escaped}|" "$target"
+    grep -qF "$image_patch" "$target" || die "Image override patch verification failed - check $target manually"
+    changed="true"
+  else
+    warn "NemoClaw image override patch: expected string not found in $target"
+    warn "Review manually: add '&& !process.env.OPENSHELL_CLUSTER_IMAGE' to the stableGatewayImage condition."
+  fi
+
+  if grep -qF '      inferenceApi = "openai-completions";' "$target"; then
+    log "NemoClaw NVIDIA inference patch already applied - skipping"
+  elif grep -qF "$nvidia_needle" "$target"; then
+    log "Patching NemoClaw onboard to force openai-completions for NVIDIA endpoints"
+    python3 - "$target" <<'PY'
+import sys
+
+path = sys.argv[1]
+needle = """    case "nvidia-prod":
+    case "nvidia-nim":
+    default:
+      providerKey = "inference";"""
+patch = """    case "nvidia-prod":
+    case "nvidia-nim":
+      inferenceApi = "openai-completions";
+      providerKey = "inference";
+      primaryModelRef = `inference/${model}`;
+      break;
+    default:
+      providerKey = "inference";"""
+
+with open(path, "r", encoding="utf-8") as f:
+    data = f.read()
+
+if needle not in data:
+    raise SystemExit(1)
+
+data = data.replace(needle, patch, 1)
+
+with open(path, "w", encoding="utf-8") as f:
+    f.write(data)
+PY
+    grep -qF '      inferenceApi = "openai-completions";' "$target" || die "NVIDIA inference patch verification failed - check $target manually"
+    changed="true"
+  else
+    warn "NemoClaw NVIDIA inference patch: expected switch block not found in $target"
+    warn "Review manually: force inferenceApi = \"openai-completions\" for nvidia-prod/nvidia-nim."
+  fi
+
+  if [[ "$changed" == "true" ]]; then
+    printf 'Patched: %s\n' "$target"
+  fi
+}
+
 install_nemoclaw() {
   need_cmd git
   need_cmd npm
@@ -92,11 +175,17 @@ install_nemoclaw() {
   if [[ -d "$clone_dir" ]]; then
     warn "Clone directory already exists: $clone_dir"
     warn "Pulling latest changes instead of cloning fresh"
+    # The Jetson patch modifies bin/lib/onboard.js. Reset it before pulling so
+    # upstream changes to that file are not blocked by the local modification.
+    # The patch is re-applied unconditionally below.
+    git -C "$clone_dir" checkout -- bin/lib/onboard.js 2>/dev/null || true
     git -C "$clone_dir" pull --ff-only || \
       die "git pull failed in $clone_dir — resolve conflicts or remove the directory and retry"
   else
     git clone "$NEMOCLAW_CLONE_URL" "$clone_dir"
   fi
+
+  patch_nemoclaw_onboard "$clone_dir"
 
   (
     cd "$clone_dir"

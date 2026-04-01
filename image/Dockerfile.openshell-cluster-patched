@@ -1,7 +1,21 @@
-ARG CLUSTER_VERSION=0.0.19
+ARG CLUSTER_VERSION=0.0.16
 FROM ghcr.io/nvidia/openshell/cluster:${CLUSTER_VERSION}
 
-# Patch: Persist the SSH handshake secret across container restarts.
+# Patch 1: Use iptables-legacy inside the gateway container.
+# Required on Jetson where the host kernel only supports legacy iptables.
+RUN set -eux; \
+    update-alternatives --set iptables  /usr/sbin/iptables-legacy; \
+    update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy; \
+    ln -sf /usr/sbin/iptables-legacy-restore  /usr/sbin/iptables-restore; \
+    ln -sf /usr/sbin/iptables-legacy-save     /usr/sbin/iptables-save; \
+    ln -sf /usr/sbin/iptables-legacy-restore  /sbin/iptables-restore; \
+    ln -sf /usr/sbin/iptables-legacy-save     /sbin/iptables-save; \
+    ln -sf /usr/sbin/ip6tables-legacy-restore /usr/sbin/ip6tables-restore; \
+    ln -sf /usr/sbin/ip6tables-legacy-save    /usr/sbin/ip6tables-save; \
+    ln -sf /usr/sbin/ip6tables-legacy-restore /sbin/ip6tables-restore; \
+    ln -sf /usr/sbin/ip6tables-legacy-save    /sbin/ip6tables-save
+
+# Patch 2: Persist the SSH handshake secret across container restarts.
 #
 # Upstream bug: cluster-entrypoint.sh generates a new random
 # SSH_HANDSHAKE_SECRET on every container start. openshell-0 picks up the

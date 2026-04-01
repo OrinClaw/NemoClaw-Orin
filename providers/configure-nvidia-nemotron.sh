@@ -49,19 +49,23 @@ case "${1:-}" in
     ;;
 esac
 
+config_args=(
+  --provider-name "$PROVIDER_NAME"
+  --provider-type nvidia
+  --base-url "$BASE_URL"
+)
+
 if [[ "${1:-}" == "--status" || "${1:-}" == "--list-providers" ]]; then
-  exec "$CONFIG_SCRIPT" "$@"
+  exec "$CONFIG_SCRIPT" "${config_args[@]}" "$@"
 fi
 
 [[ -n "${NVIDIA_API_KEY:-}" ]] || die "NVIDIA_API_KEY is not set. Export your key from https://build.nvidia.com first."
 
 log "Configuring NVIDIA Integrate provider and activating Nemotron model"
-exec "$CONFIG_SCRIPT" \
-  --provider-name "$PROVIDER_NAME" \
-  --provider-type openai \
-  --backend generic \
-  --base-url "$BASE_URL" \
-  --api-key "$NVIDIA_API_KEY" \
-  --model "$MODEL_NAME" \
-  --activate \
-  "$@"
+config_args+=(
+  --api-key "$NVIDIA_API_KEY"
+  --model "$MODEL_NAME"
+  --activate
+)
+
+exec "$CONFIG_SCRIPT" "${config_args[@]}" "$@"

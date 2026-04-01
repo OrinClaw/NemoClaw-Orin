@@ -6,7 +6,7 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="${ENV_FILE:-$HOME/.config/openshell/jetson-orin.env}"
-PATCHED_IMAGE_NAME_DEFAULT="openshell-cluster:patched-0.0.19"
+PATCHED_IMAGE_NAME_DEFAULT="openshell-cluster:patched-0.0.16"
 DOCKERFILE_PATH="${DOCKERFILE_PATH:-$SCRIPT_DIR/image/Dockerfile.openshell-cluster-patched}"
 FREE_PORT_CHECK_ONLY="${FREE_PORT_CHECK_ONLY:-false}"
 STOP_HOST_K3S="${STOP_HOST_K3S:-true}"
@@ -17,6 +17,17 @@ log() { printf '\n==> %s\n' "$*"; }
 warn() { printf '\n[WARN] %s\n' "$*" >&2; }
 die() { printf '\n[ERROR] %s\n' "$*" >&2; exit 1; }
 need_cmd() { command -v "$1" >/dev/null 2>&1 || die "Missing required command: $1"; }
+
+gateway_is_healthy() {
+  local status_output named_info active_info
+  status_output="$(openshell status 2>/dev/null || true)"
+  named_info="$(openshell gateway info -g nemoclaw 2>/dev/null || true)"
+  active_info="$(openshell gateway info 2>/dev/null || true)"
+
+  [[ "$status_output" == *"Connected"* ]] || return 1
+  [[ "$named_info" == *"nemoclaw"* ]] || return 1
+  [[ "$active_info" == *"nemoclaw"* ]] || return 1
+}
 
 source_env_file() {
   if [[ -f "$HOME/.bashrc" ]]; then
@@ -99,6 +110,26 @@ check_openshell_image_override() {
   docker image inspect "$OPENSHELL_CLUSTER_IMAGE" >/dev/null 2>&1 || die "OpenShell cluster image not found locally: $OPENSHELL_CLUSTER_IMAGE"
 }
 
+verify_cluster_image_networking() {
+  log "Verifying cluster image networking compatibility"
+  docker run --rm --entrypoint sh "$OPENSHELL_CLUSTER_IMAGE" -lc 'iptables --version' | grep -q '(legacy)' || \
+    die "Patched OpenShell cluster image is not using legacy iptables: $OPENSHELL_CLUSTER_IMAGE"
+}
+
+ensure_patched_gateway_running() {
+  if gateway_is_healthy; then
+    log "Reusing existing healthy OpenShell gateway"
+    openshell gateway select nemoclaw >/dev/null 2>&1 || true
+    return 0
+  fi
+
+  log "Starting OpenShell gateway with patched image"
+  OPENSHELL_CLUSTER_IMAGE="$OPENSHELL_CLUSTER_IMAGE" openshell gateway start --name nemoclaw
+
+  log "Selecting OpenShell gateway"
+  openshell gateway select nemoclaw
+}
+
 rebuild_cluster_image() {
   # nemoclaw onboard's preflight may call openshell gateway destroy, which
   # removes locally-built images from Docker's store. Rebuilding immediately
@@ -106,7 +137,7 @@ rebuild_cluster_image() {
   # when the gateway start is attempted. The build is fast from Docker cache.
   [[ -f "$DOCKERFILE_PATH" ]] || die "Dockerfile not found: $DOCKERFILE_PATH"
 
-  # Extract the version from the image tag, e.g. openshell-cluster:patched-0.0.19 -> 0.0.19
+  # Extract the version from the image tag, e.g. openshell-cluster:patched-0.0.16 -> 0.0.16
   local cluster_version
   cluster_version="${OPENSHELL_CLUSTER_IMAGE##*-}"
   [[ -n "$cluster_version" ]] || die "Could not extract cluster version from OPENSHELL_CLUSTER_IMAGE=$OPENSHELL_CLUSTER_IMAGE"
@@ -148,6 +179,8 @@ main() {
   free_conflicting_ports
   check_openshell_image_override
   rebuild_cluster_image
+  verify_cluster_image_networking
+  ensure_patched_gateway_running
   print_recovery_hints
   run_onboarding
 }

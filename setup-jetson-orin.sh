@@ -5,8 +5,9 @@ set -Eeuo pipefail
 # - installing or verifying the required host-side tools
 # - running the reusable host-prereqs helper
 # - verifying Docker / bridge netfilter / host iptables state
-# - discovering the latest upstream OpenShell cluster version
-# - building a patched OpenShell cluster image with handshake-secret persistence
+# - selecting the OpenShell cluster version to patch
+# - building a patched OpenShell cluster image with Jetson networking compatibility
+#   and handshake-secret persistence
 # - writing an environment file that exports OPENSHELL_CLUSTER_IMAGE
 #
 # Tool installation is delegated to standalone scripts:
@@ -26,10 +27,11 @@ UPDATE_CHECKER_PATH="${UPDATE_CHECKER_PATH:-$SCRIPT_DIR/lib/check-openshell-clus
 HOST_PREREQS_SCRIPT="${HOST_PREREQS_SCRIPT:-$SCRIPT_DIR/lib/setup-openshell-host-prereqs.sh}"
 PATCHED_IMAGE_NAME_PREFIX="${PATCHED_IMAGE_NAME_PREFIX:-openshell-cluster:patched}"
 ENV_FILE="${ENV_FILE:-$HOME/.config/openshell/jetson-orin.env}"
-DEFAULT_CLUSTER_VERSION="${DEFAULT_CLUSTER_VERSION:-0.0.19}"
+DEFAULT_CLUSTER_VERSION="${DEFAULT_CLUSTER_VERSION:-0.0.16}"
+DISCOVER_LATEST_CLUSTER_VERSION="${DISCOVER_LATEST_CLUSTER_VERSION:-false}"
 NODE_MAJOR="${NODE_MAJOR:-22}"
 OPENSHELL_INSTALL_URL="${OPENSHELL_INSTALL_URL:-https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh}"
-OPENSHELL_VERSION="${OPENSHELL_VERSION:-v0.0.19}"
+OPENSHELL_VERSION="${OPENSHELL_VERSION:-v0.0.16}"
 NEMOCLAW_CLONE_URL="${NEMOCLAW_CLONE_URL:-https://github.com/NVIDIA/NemoClaw.git}"
 OPENSHELL_CLUSTER_VERSION=""
 PATCHED_IMAGE_NAME=""
@@ -50,10 +52,12 @@ Environment overrides:
   INSTALL_NEMOCLAW_SCRIPT=/path       Override path to install-nemoclaw-cli.sh
   HOST_PREREQS_SCRIPT=/path           Override path to host-prereqs helper
   PATCHED_IMAGE_NAME_PREFIX=name:tag  Override local patched image tag prefix
-  DEFAULT_CLUSTER_VERSION=x.y.z       Fallback cluster version if update checker unavailable
+  DEFAULT_CLUSTER_VERSION=x.y.z       Pinned cluster version to patch (default: ${DEFAULT_CLUSTER_VERSION})
+  DISCOVER_LATEST_CLUSTER_VERSION=false
+                                     When true, query GitHub releases and override DEFAULT_CLUSTER_VERSION
   NODE_MAJOR=22                       Node.js major line (passed to install-nodejs.sh)
   OPENSHELL_INSTALL_URL=https://...   OpenShell install script URL (passed to install-openshell-cli.sh)
-  OPENSHELL_VERSION=v0.0.19           OpenShell version (passed to install-openshell-cli.sh)
+  OPENSHELL_VERSION=v0.0.16           OpenShell version (passed to install-openshell-cli.sh)
   NEMOCLAW_CLONE_URL=https://...      NemoClaw git repository URL (passed to install-nemoclaw-cli.sh)
 EOF_USAGE
 }
@@ -127,13 +131,16 @@ verify_host_state() {
 }
 
 discover_cluster_version() {
-  if [[ -x "$UPDATE_CHECKER_PATH" ]]; then
+  if [[ "$DISCOVER_LATEST_CLUSTER_VERSION" == "true" && -x "$UPDATE_CHECKER_PATH" ]]; then
     log "Discovering latest OpenShell cluster version"
     OPENSHELL_CLUSTER_VERSION="$($UPDATE_CHECKER_PATH --latest-version)" || \
       die "Failed to determine latest OpenShell cluster version via $UPDATE_CHECKER_PATH"
-  else
+  elif [[ "$DISCOVER_LATEST_CLUSTER_VERSION" == "true" ]]; then
     warn "Update checker not executable: $UPDATE_CHECKER_PATH"
     warn "Falling back to DEFAULT_CLUSTER_VERSION=$DEFAULT_CLUSTER_VERSION"
+    OPENSHELL_CLUSTER_VERSION="$DEFAULT_CLUSTER_VERSION"
+  else
+    log "Using pinned OpenShell cluster version"
     OPENSHELL_CLUSTER_VERSION="$DEFAULT_CLUSTER_VERSION"
   fi
 
@@ -153,6 +160,12 @@ build_patched_cluster_image() {
     -t "$PATCHED_IMAGE_NAME" \
     -f "$DOCKERFILE_PATH" \
     "$(dirname "$DOCKERFILE_PATH")"
+}
+
+verify_patched_cluster_image() {
+  log "Verifying patched OpenShell cluster image"
+  docker run --rm --entrypoint sh "$PATCHED_IMAGE_NAME" -lc 'iptables --version' | grep -q '(legacy)' || \
+    die "Patched OpenShell cluster image is not using legacy iptables: $PATCHED_IMAGE_NAME"
 }
 
 write_env_file() {
@@ -184,6 +197,7 @@ main() {
   verify_host_state
   discover_cluster_version
   build_patched_cluster_image
+  verify_patched_cluster_image
   write_env_file
 
   log "Jetson Orin host setup complete"
